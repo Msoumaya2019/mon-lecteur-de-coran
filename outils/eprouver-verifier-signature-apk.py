@@ -54,31 +54,64 @@ def fabriquer_zip(entrees: list[tuple[str, bytes]]) -> bytes:
 
 
 def bloc_signature(certificat: bytes, avec_v2: bool = True) -> bytes:
-    """Fabrique un bloc de signature conforme : taille, paires, taille, magie."""
+    """Fabrique un bloc de signature conforme a la specification.
+
+    La taille annoncee couvre les paires, le SECOND champ de taille et la magie :
+    elle ne couvre pas le premier champ. C'est cette convention qui a ete lue de
+    travers — par le controle ET par ce constructeur, qui portaient donc la meme
+    erreur et se validaient l'un l'autre. Un APK reel a tranche, en annoncant un
+    bloc de 16 376 octets ou le lecteur ne trouvait aucune paire.
+    """
     if not avec_v2:
         # Un bloc valide, mais sans la paire v2 : le controle doit le dire, pas
         # inventer une identification.
         paire = struct.pack("<QI", 4 + 3, 0x42726577) + b"abc"
-        taille = len(paire)
-        return struct.pack("<Q", taille) + paire + struct.pack("<Q", taille) + MAGIE
+    else:
+        certificats = struct.pack("<I", len(certificat)) + certificat
+        signe = (
+            struct.pack("<I", 0)  # digests : aucun
+            + struct.pack("<I", len(certificats))
+            + certificats
+            + struct.pack("<I", 0)  # attributs : aucun
+        )
+        signataire = (
+            struct.pack("<I", len(signe))
+            + signe
+            + struct.pack("<I", 0)  # signatures : aucune
+            + struct.pack("<I", 0)  # cle publique : aucune
+        )
+        valeur_v2 = struct.pack("<I", len(signataire)) + signataire
+        paire = struct.pack("<QI", len(valeur_v2) + 4, IDENTIFIANT_V2) + valeur_v2
 
-    certificats = struct.pack("<I", len(certificat)) + certificat
-    signe = (
-        struct.pack("<I", 0)  # digests : aucun
-        + struct.pack("<I", len(certificats))
-        + certificats
-        + struct.pack("<I", 0)  # attributs : aucun
-    )
-    signataire = (
-        struct.pack("<I", len(signe))
-        + signe
-        + struct.pack("<I", 0)  # signatures : aucune
-        + struct.pack("<I", 0)  # cle publique : aucune
-    )
-    valeur_v2 = struct.pack("<I", len(signataire)) + signataire
-    paire = struct.pack("<QI", len(valeur_v2) + 4, IDENTIFIANT_V2) + valeur_v2
-    taille = len(paire)
+    taille = len(paire) + 8 + 16
     return struct.pack("<Q", taille) + paire + struct.pack("<Q", taille) + MAGIE
+
+
+def conformite_du_bloc(apk: bytes) -> list[str]:
+    """Relit le bloc selon la specification, SANS passer par le controle.
+
+    C'est l'oracle du banc. Sans lui, le constructeur et le controle peuvent
+    partager une meme erreur et se donner raison : c'est exactement ce qui s'est
+    produit, et seul un APK reel l'a montre.
+    """
+    fin = apk.rfind(SIGNATURE_FIN)
+    if fin < 0:
+        return ["aucun enregistrement de fin de ZIP"]
+    (offset_central,) = struct.unpack_from("<I", apk, fin + 16)
+
+    if apk[offset_central - 16 : offset_central] != MAGIE:
+        return ["magie absente juste avant le repertoire central"]
+
+    soucis = []
+    (taille_haute,) = struct.unpack_from("<Q", apk, offset_central - 24)
+    debut = offset_central - taille_haute - 8
+    (taille_basse,) = struct.unpack_from("<Q", apk, debut)
+
+    if taille_basse != taille_haute:
+        soucis.append(f"les deux champs de taille divergent : {taille_basse} != {taille_haute}")
+    if debut + 8 + taille_haute != offset_central:
+        soucis.append("la taille annoncee ne mene pas au repertoire central")
+    return soucis
 
 
 def signer(archive: bytes, certificat: bytes, avec_v2: bool = True) -> bytes:
@@ -157,6 +190,19 @@ juger(
     ],
     [],
 )
+shutil.rmtree(dossier, ignore_errors=True)
+
+# L'oracle, et c'est lui qui donne sa valeur au cas precedent : le bloc fabrique
+# doit etre conforme a la specification, relu independamment du controle. Sans ce
+# cas, le constructeur et le controle peuvent partager une meme erreur et se
+# donner raison — ce qui est arrive, et seul un APK reel l'a montre.
+soucis_bloc = conformite_du_bloc(signer(petit, CERTIFICAT))
+if soucis_bloc:
+    echecs.append("le bloc fabrique n'est pas conforme : " + " ; ".join(soucis_bloc))
+    print("  ECHEC  le bloc fabrique n'est pas conforme a la specification")
+else:
+    reussites += 1
+    print("  ok     le bloc fabrique est conforme (oracle independant du controle)")
 
 essai, dossier = lancer(petit)
 juger(

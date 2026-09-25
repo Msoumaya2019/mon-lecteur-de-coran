@@ -122,14 +122,33 @@ def main() -> int:
             "Verifier que `buildTypes.release` pointe bien vers une `signingConfig`."
         )
 
+    # La taille annoncée par le bloc couvre les paires, le SECOND champ de taille
+    # et la magie — elle ne couvre pas le premier champ. Le bloc occupe donc
+    # [offset_central - (taille + 8), offset_central), et les paires commencent
+    # juste après le premier champ de taille.
+    #
+    # S'être trompé d'un facteur sur cette convention ne se voit pas sur une
+    # archive fabriquée par le même esprit : le banc construisait son bloc avec
+    # la même erreur, et validait donc un lecteur faux. C'est un APK réel qui l'a
+    # montré — le bloc y annonçait 16 376 octets, et le lecteur n'y trouvait
+    # aucune paire.
     (taille_bloc,) = struct.unpack_from("<Q", donnees, offset_central - 24)
-    debut_bloc = offset_central - 32 - taille_bloc
+    debut_bloc = offset_central - taille_bloc - 8
     if debut_bloc < 0:
         erreur(f"Le bloc de signature annonce {taille_bloc} octets, ce qui depasse le fichier.")
 
-    # Parcourir les paires (identifiant, valeur) du bloc.
+    # Les deux champs de taille doivent s'accorder : c'est la marque d'un bloc
+    # bien formé, et le seul contrôle indépendant qu'on puisse faire sur lui.
+    (taille_basse,) = struct.unpack_from("<Q", donnees, debut_bloc)
+    if taille_basse != taille_bloc:
+        erreur(
+            "Les deux champs de taille du bloc de signature divergent "
+            f"({taille_basse} et {taille_bloc}) : le bloc est mal forme."
+        )
+
+    # Parcourir les paires (identifiant, valeur).
     position = debut_bloc + 8
-    limite = debut_bloc + 8 + taille_bloc
+    limite = offset_central - 24
     certificat = b""
     identifiants: list[str] = []
 
