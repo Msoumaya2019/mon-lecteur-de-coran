@@ -66,6 +66,7 @@ jobs:
         run: ./android/gradlew -p android assembleRelease bundleRelease --no-daemon --stacktrace
 
       - name: Contrôler ce qui a été produit
+        id: controle
         run: |
           APK=android/app/build/outputs/apk/release/app-release.apk
           AAB=android/app/build/outputs/bundle/release/app-release.aab
@@ -77,25 +78,36 @@ jobs:
             fi
           done
 
-          # Un APK sans bloc de signature ne s'installe pas : Android le refuse,
-          # et rien dans le journal de compilation ne le signale. Depuis le
-          # schéma de signature v2, la signature n'est plus dans
-          # `META-INF/*.RSA` — la chercher là ferait conclure à tort à son
-          # absence. Le témoin est la magie du bloc, en fin de fichier.
-          if ! tail -c 4096 "$APK" | grep -aq "APK Sig Block 42"; then
-            echo "::error::L'APK ne porte aucun bloc de signature : Android le refusera à l'installation."
+          # La signature se lit par la STRUCTURE, jamais par une fenêtre en fin de
+          # fichier. Le bloc v2 vit entre la dernière entrée du ZIP et le
+          # répertoire central : la magie « APK Sig Block 42 » est donc suivie du
+          # répertoire central entier. Sur un APK universel à quatre
+          # architectures, cela fait des dizaines de kilo-octets — mesuré à
+          # 50 744 octets sur une archive de 127 355. Un contrôle qui cherchait la
+          # magie dans les 4096 derniers octets a accusé un APK parfaitement
+          # signé, et le flux s'est arrêté après vingt-trois minutes de
+          # compilation, avant de publier quoi que ce soit.
+          SIGNATURE=$(python3 outils/verifier-signature-apk.py "$APK")
+          printf '%s\n' "$SIGNATURE"
+          echo "empreinte=$(printf '%s\n' "$SIGNATURE" | sed -n 's/^certificat_sha256=//p')" >> "$GITHUB_OUTPUT"
+
+          # Le typage et les épreuves ne voient pas le contenu réellement embarqué.
+          # Un bundle sans sa couche réseau s'installe parfaitement et n'affiche
+          # rien. Le chemin du bundle est cherché, pas supposé.
+          BUNDLE=$(unzip -l "$APK" | grep -oE '[^ ]*index\.android\.bundle' | head -n 1)
+          if [ -z "$BUNDLE" ]; then
+            echo "::error::Aucun bundle JavaScript dans l'APK. Contenu proche :"
+            unzip -l "$APK" | grep -E 'assets/|\.bundle|\.hbc' | head -n 20
             exit 1
           fi
 
-          # Le typage et les épreuves ne voient pas le contenu réellement
-          # embarqué. Un bundle sans sa couche réseau s'installe parfaitement et
-          # n'affiche rien.
-          unzip -p "$APK" assets/index.android.bundle > "$RUNNER_TEMP/bundle.hbc"
+          unzip -p "$APK" "$BUNDLE" > "$RUNNER_TEMP/bundle.hbc"
           if ! grep -aq "api.quran.com" "$RUNNER_TEMP/bundle.hbc"; then
             echo "::error::Le bundle embarqué ne contient pas l'adresse de l'API du Coran."
             exit 1
           fi
 
+          echo "Bundle : $BUNDLE ($(du -h "$RUNNER_TEMP/bundle.hbc" | cut -f1))"
           echo "APK : $(du -h "$APK" | cut -f1) — AAB : $(du -h "$AAB" | cut -f1)"
 
       - name: Nommer les fichiers
@@ -125,6 +137,7 @@ jobs:
       - name: Résumer la compilation
         env:
           MODE: ${{ steps.signature.outputs.mode }}
+          EMPREINTE: ${{ steps.controle.outputs.empreinte }}
         run: |
           VERSION=$(node -p "require('./app.json').expo.version")
           {
@@ -133,6 +146,7 @@ jobs:
             echo "- APK : \`mon-lecteur-de-coran.apk\`"
             echo "- AAB : \`mon-lecteur-de-coran.aab\`"
             echo "- Commit : \`$GITHUB_SHA\`"
+            echo "- Certificat de signature (SHA-256) : \`$EMPREINTE\`"
             echo
             if [ "$MODE" = "publication" ]; then
               echo "Signé avec **votre clé de publication** : l'APK se réinstalle par-dessus"

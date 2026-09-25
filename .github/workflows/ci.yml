@@ -51,6 +51,14 @@ jobs:
         # l'empreinte SHA-256 est comparée à chaque cas.
         run: npm run eprouver:flux
 
+      - name: Éprouver le contrôle de signature d'APK
+        # Ce contrôle est la seule barrière avant de remettre un APK à quelqu'un :
+        # une erreur dans le sens du refus supprime l'artefact après vingt-trois
+        # minutes de compilation, une erreur dans l'autre sens laisse passer un
+        # fichier qu'Android refusera d'installer. Le banc fabrique de vraies
+        # archives signées et reproduit la régression mesurée.
+        run: npm run eprouver:signature
+
       - name: Vérifier les types
         run: npm run typecheck
 
