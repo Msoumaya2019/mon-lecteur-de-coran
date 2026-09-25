@@ -1,0 +1,156 @@
+{
+ "juzs": [
+  {
+   "numero": 1,
+   "page": 1,
+   "premierVerset": "1:1"
+  },
+  {
+   "numero": 2,
+   "page": 22,
+   "premierVerset": "2:142"
+  },
+  {
+   "numero": 3,
+   "page": 42,
+   "premierVerset": "2:253"
+  },
+  {
+   "numero": 4,
+   "page": 62,
+   "premierVerset": "3:93"
+  },
+  {
+   "numero": 5,
+   "page": 82,
+   "premierVerset": "4:24"
+  },
+  {
+   "numero": 6,
+   "page": 102,
+   "premierVerset": "4:148"
+  },
+  {
+   "numero": 7,
+   "page": 121,
+   "premierVerset": "5:82"
+  },
+  {
+   "numero": 8,
+   "page": 142,
+   "premierVerset": "6:111"
+  },
+  {
+   "numero": 9,
+   "page": 162,
+   "premierVerset": "7:88"
+  },
+  {
+   "numero": 10,
+   "page": 182,
+   "premierVerset": "8:41"
+  },
+  {
+   "numero": 11,
+   "page": 201,
+   "premierVerset": "9:93"
+  },
+  {
+   "numero": 12,
+   "page": 222,
+   "premierVerset": "11:6"
+  },
+  {
+   "numero": 13,
+   "page": 242,
+   "premierVerset": "12:53"
+  },
+  {
+   "numero": 14,
+   "page": 262,
+   "premierVerset": "15:1"
+  },
+  {
+   "numero": 15,
+   "page": 282,
+   "premierVerset": "17:1"
+  },
+  {
+   "numero": 16,
+   "page": 302,
+   "premierVerset": "18:75"
+  },
+  {
+   "numero": 17,
+   "page": 322,
+   "premierVerset": "21:1"
+  },
+  {
+   "numero": 18,
+   "page": 342,
+   "premierVerset": "23:1"
+  },
+  {
+   "numero": 19,
+   "page": 362,
+   "premierVerset": "25:21"
+  },
+  {
+   "numero": 20,
+   "page": 382,
+   "premierVerset": "27:56"
+  },
+  {
+   "numero": 21,
+   "page": 402,
+   "premierVerset": "29:46"
+  },
+  {
+   "numero": 22,
+   "page": 422,
+   "premierVerset": "33:31"
+  },
+  {
+   "numero": 23,
+   "page": 442,
+   "premierVerset": "36:28"
+  },
+  {
+   "numero": 24,
+   "page": 462,
+   "premierVerset": "39:32"
+  },
+  {
+   "numero": 25,
+   "page": 482,
+   "premierVerset": "41:47"
+  },
+  {
+   "numero": 26,
+   "page": 502,
+   "premierVerset": "46:1"
+  },
+  {
+   "numero": 27,
+   "page": 522,
+   "premierVerset": "51:31"
+  },
+  {
+   "numero": 28,
+   "page": 542,
+   "premierVerset": "58:1"
+  },
+  {
+   "numero": 29,
+   "page": 562,
+   "premierVerset": "67:1"
+  },
+  {
+   "numero": 30,
+   "page": 582,
+   "premierVerset": "78:1"
+  }
+ ],
+ "note": "Table engendree par outils/generer-juz.py. La page est celle du premier verset du juz, mesuree a la source : un juz peut commencer au milieu d'une page, donc la deduire de la premiere page ou il apparait est faux (juz 7 : 122 au lieu de 121).",
+ "source": "https://api.quran.com/api/v4/juzs"
+}

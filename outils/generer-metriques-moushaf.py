@@ -57,7 +57,7 @@ POLICE = "https://static.qurancdn.com/fonts/quran/hafs/%s/ttf/p%d.ttf"
 EDITIONS = (("v4", "code_v2"), ("v1", "code_v1"))
 
 RACINE = Path(__file__).resolve().parent.parent
-SORTIE = RACINE / "assets" / "moushaf-metriques.json"
+SORTIE = RACINE / "src" / "donnees" / "moushaf-metriques.json"
 CACHE = Path(os.environ.get("TEMP", "/tmp")) / "moushaf-fonts-cache"
 
 ENTETES = {"User-Agent": "mon-lecteur-de-coran/1.0 (generateur de metriques)"}

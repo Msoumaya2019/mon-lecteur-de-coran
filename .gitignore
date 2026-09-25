@@ -41,3 +41,19 @@ example
 # generated native folders
 /ios
 /android
+
+# sortie de verification locale (voir README)
+.export-verification/
+
+# secrets : le depot est public, rien de tout ceci ne doit y entrer
+.env
+.env.*
+!.env.example
+*.keystore
+*.cer
+credentials.json
+secrets/
+
+# python des generateurs
+__pycache__/
+*.pyc

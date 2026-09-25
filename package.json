@@ -4,9 +4,13 @@
   "version": "1.0.0",
   "dependencies": {
     "@expo/ui": "~57.0.20",
+    "@expo/vector-icons": "^15.0.2",
+    "@react-native-async-storage/async-storage": "2.2.0",
     "expo": "~57.0.25",
+    "expo-audio": "~57.0.5",
     "expo-constants": "~57.0.19",
     "expo-device": "~57.0.2",
+    "expo-file-system": "~57.0.7",
     "expo-font": "~57.0.4",
     "expo-glass-effect": "~57.0.4",
     "expo-image": "~57.0.5",
@@ -28,16 +32,25 @@
     "react-native-worklets": "0.10.1"
   },
   "devDependencies": {
+    "@types/node": "^22.20.4",
     "@types/react": "~19.2.2",
-    "typescript": "~6.0.3"
+    "typescript": "~6.0.3",
+    "yaml": "^2.9.1"
   },
   "scripts": {
     "start": "expo start",
-    "reset-project": "node ./scripts/reset-project.js",
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "typecheck": "tsc --noEmit",
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./outils/enregistrer-tests.mjs --test \"tests/*.test.ts\"",
+    "verifier:flux": "node outils/verifier-flux.mjs",
+    "eprouver:flux": "python3 outils/eprouver-verifier-flux.py",
+    "verifier": "npm run verifier:flux && npm run typecheck && npm test",
+    "genere:metriques": "python outils/generer-metriques-moushaf.py",
+    "genere:juz": "python outils/generer-juz.py",
+    "genere:icones": "python outils/generer-icones.py"
   },
   "private": true
 }

@@ -1,0 +1,65 @@
+name: Intégration continue
+
+# Le seul flux qui tourne sans geste : il coûte deux minutes et il garde la
+# branche principale verte. Les compilations natives, elles, restent manuelles —
+# vingt minutes chacune, à ne pas dépenser à chaque poussée.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verifier:
+    name: Types, flux et épreuves
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Récupérer le dépôt
+        uses: actions/checkout@v5
+
+      - name: Installer Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22.22.2'
+          cache: npm
+
+      - name: Installer les dépendances
+        # `npm ci` refuse un package.json et un package-lock.json désaccordés.
+        # C'est voulu : un verrou oublié ferait passer ici ce qui casserait chez
+        # la personne qui clone le dépôt.
+        run: npm ci
+
+      - name: Analyser les flux de travail
+        # En premier, et avant tout ce qui est long. Ce contrôle coûte une
+        # seconde là où la compilation native en coûte mille deux cents, et il
+        # est le seul à lire `.github/workflows` : aucun autre maillon de la
+        # chaîne ne verrait disparaître un flux.
+        run: npm run verifier:flux
+
+      - name: Éprouver le contrôle des flux
+        # Un contrôle vert ne prouve rien tant qu'on ne l'a pas falsifié. Ce banc
+        # introduit chaque défaut dans un vrai flux et vérifie que le contrôle
+        # échoue, pour la bonne raison. Il restaure les fichiers à l'octet, et
+        # l'empreinte SHA-256 est comparée à chaque cas.
+        run: npm run eprouver:flux
+
+      - name: Vérifier les types
+        run: npm run typecheck
+
+      - name: Lancer les épreuves
+        run: npm test
+
+      - name: Empaqueter l'application
+        # Le typage ne voit pas le graphe de modules : un import qui pointe vers
+        # un fichier absent, un module natif mal résolu, une police introuvable
+        # passent `tsc` et échouent ici. C'est le seul contrôle qui prouve que
+        # l'application se construit réellement.
+        run: npx expo export --platform android --output-dir "$RUNNER_TEMP/export-ci"

@@ -1,6 +1,6 @@
-The MIT License (MIT)
+MIT License
 
-Copyright (c) 2015-present 650 Industries, Inc. (aka Expo)
+Copyright (c) 2026 Les contributeurs de Mon lecteur de Coran
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,3 +19,17 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---
+
+Cette licence couvre le CODE de l'application, et lui seul.
+
+Le texte coranique, les traductions et les polices ne sont pas couverts :
+
+- le texte du mushaf et les traductions proviennent de l'API de Quran.com /
+  Quran Foundation, et gardent leurs droits propres. La traduction de Muhammad
+  Hamidullah, notamment, est protégée ;
+- la police Amiri Quran est sous SIL Open Font License 1.1 — voir
+  assets/polices/OFL.txt ;
+- les polices QCF sont téléchargées depuis le CDN de Quran.com et restent la
+  propriété de leurs auteurs.

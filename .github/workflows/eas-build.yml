@@ -1,0 +1,119 @@
+name: EAS — compilation dans le nuage
+
+# Manuel, et manuel seulement : une compilation EAS consomme le forfait du
+# compte Expo. Le flux natif (`android-apk.yml`, `ios-unsigned.yml`) n'en
+# consomme aucun et produit déjà l'APK, l'AAB et l'IPA — celui-ci existe pour la
+# voie signée, quand les identifiants de publication sont en place.
+on:
+  workflow_dispatch:
+    inputs:
+      plateforme:
+        description: Plateforme à compiler
+        type: choice
+        options: [android, ios]
+        default: android
+      profil:
+        description: Profil de eas.json
+        type: choice
+        options: [development, preview, production]
+        default: preview
+
+permissions:
+  contents: read
+
+jobs:
+  construire:
+    name: Compiler avec EAS
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Récupérer le dépôt
+        uses: actions/checkout@v5
+
+      - name: Installer Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22.22.2'
+          cache: npm
+
+      - name: Installer les dépendances
+        run: npm ci
+
+      - name: Vérifier que le jeton EAS est présent
+        # Quelques secondes ici valent mieux qu'une attente de vingt minutes
+        # avant d'apprendre que le jeton manque. Le message nomme l'endroit où
+        # le poser, parce que l'erreur brute d'EAS ne le fait pas.
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "::error::Le secret EXPO_TOKEN est absent."
+            echo "Créez un jeton sur https://expo.dev/settings/access-tokens, puis"
+            echo "ajoutez-le dans Settings → Secrets and variables → Actions → New repository secret."
+            echo "Sans lui, aucune compilation EAS n'est possible."
+            exit 1
+          fi
+          npx eas-cli@latest whoami
+
+      - name: Compiler avec EAS
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          npx eas-cli@latest build \
+            --platform ${{ inputs.plateforme }} \
+            --profile ${{ inputs.profil }} \
+            --non-interactive --wait --json > build.json
+          cat build.json
+
+      - name: Télécharger l'artefact
+        id: telechargement
+        run: |
+          ADRESSE=$(node -p "const b=require('./build.json'); const p=Array.isArray(b)?b[0]:b; p.artifacts.applicationArchiveUrl || p.artifacts.buildUrl || ''")
+          if [ -z "$ADRESSE" ]; then
+            echo "::error::Aucune adresse d'artefact dans la réponse d'EAS."
+            exit 1
+          fi
+
+          # L'extension se lit sur l'adresse, elle ne se suppose pas. EAS livre
+          # un `tar.gz` — et non un IPA — quand il compile iOS sans identifiant
+          # Apple : un IPA est une archive signée, et sans signature il n'y en a
+          # pas. Forcer `.ipa` produirait un fichier dont le nom ment, et que
+          # les outils de re-signature refusent, puisqu'ils attendent un ZIP.
+          NOM="${ADRESSE##*/}"
+          EXT="${NOM#*.}"
+          echo "extension=$EXT" >> "$GITHUB_OUTPUT"
+          curl --fail --location "$ADRESSE" --output "mon-lecteur-de-coran.$EXT"
+          ls -l "mon-lecteur-de-coran.$EXT"
+
+      - name: Publier l'artefact
+        uses: actions/upload-artifact@v7
+        with:
+          name: mon-lecteur-de-coran.${{ steps.telechargement.outputs.extension }}
+          path: mon-lecteur-de-coran.${{ steps.telechargement.outputs.extension }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Résumer la compilation
+        env:
+          EXTENSION: ${{ steps.telechargement.outputs.extension }}
+        run: |
+          {
+            echo "## EAS — profil \`${{ inputs.profil }}\`, plateforme \`${{ inputs.plateforme }}\`"
+            echo
+            echo "- Artefact : \`mon-lecteur-de-coran.$EXTENSION\`"
+            echo "- Commit : \`$GITHUB_SHA\`"
+            echo
+            if [ "$EXTENSION" = "ipa" ]; then
+              echo "IPA signé : il s'installe directement sur un appareil enregistré."
+            elif [ "$EXTENSION" = "tar.gz" ]; then
+              echo "**Ce n'est pas un IPA**, et le renommer n'en ferait pas un."
+              echo "Sans identifiant Apple, EAS ne peut compiler que pour le"
+              echo "**simulateur** : l'archive contient \`<Nom>.app\`, à poser par"
+              echo "\`xcrun simctl install booted <Nom>.app\` dans le simulateur d'un Mac."
+              echo "Un binaire de simulateur ne s'installera sur **aucun** iPhone,"
+              echo "même re-signé — pour un fichier installable, utiliser le flux"
+              echo "\`iOS — IPA non signé\`, qui compile pour l'appareil."
+            else
+              echo "APK signé par EAS : il se pose directement sur un téléphone."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

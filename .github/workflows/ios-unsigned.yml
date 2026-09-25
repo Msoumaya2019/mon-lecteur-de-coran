@@ -1,0 +1,213 @@
+name: iOS — IPA non signé
+
+# Manuel, et manuel seulement : une compilation iOS native coûte une quinzaine
+# de minutes sur un exécuteur macOS.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  construire:
+    name: Compiler l'IPA non signé
+    # Xcode 26 est le premier à fournir Swift 6.2, exigé par
+    # `expo-modules-jsi` — dépendance transitive d'Expo SDK 57, dont le
+    # manifeste déclare `swift-tools-version: 6.2`. Mesuré dans le paquet
+    # installé de ce dépôt. `macos-26` a Xcode 26 par défaut ; `macos-15` a
+    # Xcode 26.3 installé mais 16.4 par défaut, et la compilation échouerait sur
+    # un message qui nomme le paquet `apple` — le dossier du paquet, pas Apple.
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      EXPO_NO_TELEMETRY: '1'
+    steps:
+      - name: Récupérer le dépôt
+        uses: actions/checkout@v5
+
+      - name: Installer Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22.22.2'
+          cache: npm
+
+      - name: Vérifier la version d'Xcode
+        # Une étape instantanée vaut mieux qu'un échec obscur au fond d'un
+        # journal de quinze minutes. Le numéro majeur est un indice assumé :
+        # Xcode 26 est le premier à fournir Swift 6.2.
+        run: |
+          VERSION=$(xcodebuild -version | head -n 1 | sed 's/^Xcode //')
+          MAJEUR=${VERSION%%.*}
+          if [ "$MAJEUR" -lt 26 ]; then
+            echo "::error::Xcode $VERSION est trop ancien pour ce projet."
+            echo "expo-modules-jsi déclare « swift-tools-version: 6.2 », fourni à partir d'Xcode 26."
+            exit 1
+          fi
+          echo "Xcode $VERSION"
+
+      - name: Installer les dépendances
+        run: npm ci
+
+      - name: Générer le projet natif
+        run: npx expo prebuild --platform ios --clean
+
+      - name: Repérer le projet et le schéma
+        id: cible
+        run: |
+          PROJET_APP=$(find ios -maxdepth 1 -name '*.xcodeproj' | head -n 1)
+          if [ -z "$PROJET_APP" ]; then
+            echo "::error::Aucun projet Xcode n'a été généré par expo prebuild."
+            exit 1
+          fi
+
+          # Le schéma de l'application porte le nom de son `.xcodeproj`. Ne pas
+          # le prendre au hasard dans la liste : sur un espace de travail
+          # CocoaPods, `xcodebuild -list` énumère aussi les schémas des pods, et
+          # `EXConstants` arrive alphabétiquement avant. Compiler un pod réussit,
+          # et l'empaquetage ne trouve ensuite aucune application.
+          SCHEME=$(basename "$PROJET_APP" .xcodeproj)
+          WORKSPACE=$(find ios -maxdepth 1 -name '*.xcworkspace' | head -n 1)
+
+          # Sans CocoaPods, Expo produit un projet Xcode simple, sans espace de
+          # travail : le repli sur `.xcodeproj` n'est pas décoratif.
+          if [ -n "$WORKSPACE" ]; then TYPE=workspace; CHEMIN=$WORKSPACE; else TYPE=project; CHEMIN=$PROJET_APP; fi
+
+          # `type` et `chemin` sortent SÉPARÉMENT, jamais concaténés en
+          # `-workspace <chemin>` : une sortie qui porte un chemin et
+          # s'interpole sans guillemets se découperait sur ses espaces.
+          #
+          # L'extraction vit dans un script, et non dans un `node -e` multiligne :
+          # un extrait à la colonne 0 termine le bloc scalaire du `run: |` et
+          # rend le YAML invalide.
+          SCHEMAS=$(xcodebuild "-$TYPE" "$CHEMIN" -list -json 2>/dev/null | node outils/lire-schemas-xcodebuild.mjs || true)
+
+          # Ce contrôle CONFIRME, il ne sélectionne pas : le schéma est déjà
+          # déduit du projet. Une liste illisible avertit au lieu d'échouer, car
+          # un contrôle de confort qui casse une compilation valide coûte plus
+          # cher que le défaut surveillé.
+          if [ -z "$SCHEMAS" ]; then
+            echo "::warning::La liste des schémas n'a pas pu être lue."
+          elif ! printf '%s\n' "$SCHEMAS" | grep -Fxq "$SCHEME"; then
+            echo "::error::Le schéma « $SCHEME » est absent de la liste des schémas du projet."
+            printf '%s\n' "$SCHEMAS"
+            exit 1
+          fi
+
+          echo "Projet : $CHEMIN"
+          echo "Schéma : $SCHEME"
+          echo "type=$TYPE" >> "$GITHUB_OUTPUT"
+          echo "chemin=$CHEMIN" >> "$GITHUB_OUTPUT"
+          echo "scheme=$SCHEME" >> "$GITHUB_OUTPUT"
+
+      - name: Compiler sans signature
+        # Aucun `working-directory` sur cette étape. Les chemins produits par le
+        # repérage partent de la racine du dépôt ; les exécuter depuis `ios/`
+        # les préfixerait une seconde fois — `ios/ios/…` — et xcodebuild
+        # répondrait « does not exist » pour un espace de travail qu'on vient de
+        # trouver. Le défaut survit à une relecture, parce qu'un
+        # `working-directory` est une propriété d'étape, invisible quand on lit
+        # le `run:` seul.
+        #
+        # Les quatre réglages de signature sont nécessaires ensemble :
+        # `CODE_SIGNING_ALLOWED=NO` seul suffit la plupart du temps, mais Xcode
+        # retombe parfois sur une identité par défaut, et l'échec est alors un
+        # message de trousseau de clés difficile à relier à sa cause.
+        run: |
+          xcodebuild "-${{ steps.cible.outputs.type }}" "${{ steps.cible.outputs.chemin }}" \
+            -scheme "${{ steps.cible.outputs.scheme }}" \
+            -configuration Release -sdk iphoneos -derivedDataPath ios/build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" CODE_SIGN_ENTITLEMENTS="" build
+
+      - name: Empaqueter et contrôler l'IPA
+        run: |
+          # Le chemin doit correspondre exactement au `-derivedDataPath` de
+          # l'étape précédente : ce sont deux endroits distincts du YAML, et
+          # rien ne les relie.
+          APP=$(find ios/build/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' | head -n 1)
+          if [ -z "$APP" ]; then
+            echo "::error::Aucune application compilée dans Release-iphoneos."
+            exit 1
+          fi
+          echo "Application : $APP"
+
+          rm -rf Payload
+          mkdir -p Payload
+          cp -R "$APP" Payload/
+          zip -qry mon-lecteur-de-coran.ipa Payload
+          rm -rf Payload
+
+          # Un IPA est une archive ZIP : `Payload/<Nom>.app/`. On la relit pour
+          # vérifier ce qu'elle contient réellement, plutôt que de faire
+          # confiance à la configuration.
+          rm -rf "$RUNNER_TEMP/ipa"
+          unzip -o -q mon-lecteur-de-coran.ipa -d "$RUNNER_TEMP/ipa"
+
+          INFO=$(find "$RUNNER_TEMP/ipa/Payload" -maxdepth 2 -name 'Info.plist' | head -n 1)
+          if [ -z "$INFO" ]; then
+            echo "::error::Payload/<Nom>.app/Info.plist est absent du paquet."
+            exit 1
+          fi
+
+          # Le témoin qui tranche entre une compilation pour APPAREIL et une
+          # compilation pour SIMULATEUR. La seconde ne s'installera sur aucun
+          # iPhone, même re-signée — et l'absence de profil de provisionnement
+          # ne dit rien de cette question, puisqu'une compilation appareil non
+          # signée en est dépourvue elle aussi.
+          PLATEFORME=$(/usr/libexec/PlistBuddy -c "Print :DTPlatformName" "$INFO")
+          if [ "$PLATEFORME" != "iphoneos" ]; then
+            echo "::error::Le binaire vise « $PLATEFORME » et non l'appareil : il ne s'installera sur aucun iPhone, même re-signé."
+            exit 1
+          fi
+          echo "Plateforme : $PLATEFORME"
+
+          # Le typage et les épreuves ne voient pas le contenu réellement
+          # embarqué. Un bundle sans sa couche réseau s'installe parfaitement et
+          # n'affiche rien — le défaut ne se voit qu'après installation.
+          BUNDLE=$(find "$RUNNER_TEMP/ipa/Payload" -maxdepth 2 -name 'main.jsbundle' | head -n 1)
+          if [ -z "$BUNDLE" ]; then
+            echo "::error::main.jsbundle est absent du paquet."
+            exit 1
+          fi
+          if ! grep -aq "api.quran.com" "$BUNDLE"; then
+            echo "::error::Le bundle embarqué ne contient pas l'adresse de l'API du Coran."
+            exit 1
+          fi
+
+          echo "IPA : $(du -h mon-lecteur-de-coran.ipa | cut -f1)"
+
+      - name: Publier l'IPA
+        uses: actions/upload-artifact@v7
+        with:
+          name: mon-lecteur-de-coran.ipa
+          path: mon-lecteur-de-coran.ipa
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Résumer la compilation
+        run: |
+          VERSION=$(node -p "require('./app.json').expo.version")
+          {
+            echo "## iOS $VERSION"
+            echo
+            echo "- IPA : \`mon-lecteur-de-coran.ipa\`"
+            echo "- Commit : \`$GITHUB_SHA\`"
+            echo
+            echo "Compilation **pour appareil**, sans signature. Un IPA non signé ne"
+            echo "s'installe pas : iOS vérifie la signature et refuse tout ce qui en est"
+            echo "dépourvu. Ce fichier est un produit intermédiaire, à re-signer sur un"
+            echo "Mac ou par un outil de pose latérale."
+            echo
+            echo "Trois obstacles à connaître, dont aucun message d'erreur ne nomme la cause :"
+            echo
+            echo "1. **Mode développeur obligatoire** depuis iOS 16 — Réglages →"
+            echo "   Confidentialité et sécurité → Mode développeur, puis redémarrer."
+            echo "2. **Le mot de passe d'application est refusé** avec un compte Apple"
+            echo "   gratuit : il faut le mot de passe principal, puis le code à six"
+            echo "   chiffres de la double authentification."
+            echo "3. **Sous Windows, iTunes doit venir du site d'Apple** — la version du"
+            echo "   Microsoft Store n'installe pas les pilotes de l'appareil."
+            echo
+            echo "Un compte Apple gratuit limite à 7 jours de validité, 3 applications"
+            echo "simultanées et 10 identifiants par semaine."
+          } >> "$GITHUB_STEP_SUMMARY"

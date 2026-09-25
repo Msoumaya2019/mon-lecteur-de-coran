@@ -1,0 +1,148 @@
+name: Android — APK et AAB
+
+# Manuel, et manuel seulement. Une compilation Android coûte une vingtaine de
+# minutes ; la déclencher à chaque poussée épuiserait le quota pour rien, et
+# l'APK n'a de sens qu'au moment où on veut l'installer sur un téléphone.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  construire:
+    name: Compiler l'APK et l'AAB
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      EXPO_NO_TELEMETRY: '1'
+    steps:
+      - name: Récupérer le dépôt
+        uses: actions/checkout@v5
+
+      - name: Installer Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22.22.2'
+          cache: npm
+
+      - name: Installer Java
+        # Gradle 9 exige Java 17 au minimum ; 21 est le choix sûr.
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Installer le SDK Android
+        # `@v4` est obligatoire : `@v3` tente d'installer le paquet `tools`,
+        # retiré du dépôt Android, et échoue systématiquement. La liste
+        # explicite empêche `tools` de revenir par les valeurs par défaut.
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools'
+
+      - name: Installer les dépendances
+        run: npm ci
+
+      - name: Générer le projet natif
+        # `android/` n'est pas versionné : il est régénéré ici, à chaque
+        # compilation. Toute correction appliquée au projet natif doit donc
+        # l'être à nouveau à chaque fois — d'où le script de signature, qui
+        # refuse de continuer si sa substitution n'a pas pris.
+        run: npx expo prebuild --platform android --clean
+
+      - name: Appliquer la signature de publication, si elle est fournie
+        id: signature
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: python3 outils/configurer-signature-android.py
+
+      - name: Compiler l'APK et l'AAB
+        # Aucun `working-directory` : tous les chemins restent relatifs à la
+        # racine du dépôt, et l'étape suivante les retrouve sans les doubler.
+        run: ./android/gradlew -p android assembleRelease bundleRelease --no-daemon --stacktrace
+
+      - name: Contrôler ce qui a été produit
+        run: |
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          AAB=android/app/build/outputs/bundle/release/app-release.aab
+
+          for fichier in "$APK" "$AAB"; do
+            if [ ! -f "$fichier" ]; then
+              echo "::error::$fichier n'a pas été produit."
+              exit 1
+            fi
+          done
+
+          # Un APK sans bloc de signature ne s'installe pas : Android le refuse,
+          # et rien dans le journal de compilation ne le signale. Depuis le
+          # schéma de signature v2, la signature n'est plus dans
+          # `META-INF/*.RSA` — la chercher là ferait conclure à tort à son
+          # absence. Le témoin est la magie du bloc, en fin de fichier.
+          if ! tail -c 4096 "$APK" | grep -aq "APK Sig Block 42"; then
+            echo "::error::L'APK ne porte aucun bloc de signature : Android le refusera à l'installation."
+            exit 1
+          fi
+
+          # Le typage et les épreuves ne voient pas le contenu réellement
+          # embarqué. Un bundle sans sa couche réseau s'installe parfaitement et
+          # n'affiche rien.
+          unzip -p "$APK" assets/index.android.bundle > "$RUNNER_TEMP/bundle.hbc"
+          if ! grep -aq "api.quran.com" "$RUNNER_TEMP/bundle.hbc"; then
+            echo "::error::Le bundle embarqué ne contient pas l'adresse de l'API du Coran."
+            exit 1
+          fi
+
+          echo "APK : $(du -h "$APK" | cut -f1) — AAB : $(du -h "$AAB" | cut -f1)"
+
+      - name: Nommer les fichiers
+        # Les artefacts portent le nom que l'utilisateur a demandé, et le
+        # fichier à l'intérieur de l'archive aussi : télécharger
+        # `mon-lecteur-de-coran.apk` doit donner un fichier de ce nom-là.
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk mon-lecteur-de-coran.apk
+          cp android/app/build/outputs/bundle/release/app-release.aab mon-lecteur-de-coran.aab
+
+      - name: Publier l'APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: mon-lecteur-de-coran.apk
+          path: mon-lecteur-de-coran.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publier l'AAB
+        uses: actions/upload-artifact@v7
+        with:
+          name: mon-lecteur-de-coran.aab
+          path: mon-lecteur-de-coran.aab
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Résumer la compilation
+        env:
+          MODE: ${{ steps.signature.outputs.mode }}
+        run: |
+          VERSION=$(node -p "require('./app.json').expo.version")
+          {
+            echo "## Android $VERSION"
+            echo
+            echo "- APK : \`mon-lecteur-de-coran.apk\`"
+            echo "- AAB : \`mon-lecteur-de-coran.aab\`"
+            echo "- Commit : \`$GITHUB_SHA\`"
+            echo
+            if [ "$MODE" = "publication" ]; then
+              echo "Signé avec **votre clé de publication** : l'APK se réinstalle par-dessus"
+              echo "les versions précédentes, et l'AAB est accepté par Google Play."
+            else
+              echo "Signé avec la **clé de débogage du gabarit Expo**, faute de secrets"
+              echo "\`ANDROID_KEYSTORE_*\`. Cette clé est stable d'une compilation à"
+              echo "l'autre — l'APK se réinstalle donc par-dessus le précédent, sans"
+              echo "perte de données. Mais elle est publique et identique pour tous les"
+              echo "projets Expo : elle convient pour **valider**, jamais pour distribuer,"
+              echo "et l'AAB ne sera pas accepté par Google Play."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
