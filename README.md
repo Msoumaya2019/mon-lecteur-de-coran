@@ -45,11 +45,13 @@ npm run android    # ouvre sur Android
 ### Vérifier
 
 ```bash
-npm run verifier       # contrôle des flux + types + 132 épreuves
-npm run verifier:flux  # analyse statique de .github/workflows
-npm run eprouver:flux  # falsifie ce contrôle, pour prouver qu'il détecte
-npm run typecheck      # tsc --noEmit
-npm test               # node --test
+npm run verifier            # contrôle des flux + types + 143 épreuves
+npm run verifier:flux       # analyse statique de .github/workflows
+npm run eprouver:flux       # falsifie ce contrôle, pour prouver qu'il détecte
+npm run eprouver:signature  # falsifie la lecture du bloc de signature d'APK
+npm run typecheck           # tsc --noEmit
+npm test                    # node --test
+npm run prouver:composition -- 3 604   # confronte la page recomposée à l'imprimé
 ```
 
 ---
@@ -64,7 +66,7 @@ src/
     ui/                feuille basse, boutons, commandes
   constants/           thème, récitants, traductions, polices
   donnees/             tables engendrées (métriques des 604 pages, juz)
-  lib/                 fonctions pures (versets, texte)
+  lib/                 fonctions pures (versets, texte, composition de la page)
   services/
     http.ts            couche réseau commune
     quran/             API du Coran, assemblage des pages, sourates
@@ -95,10 +97,43 @@ Deux éditions coexistent, et le choix se mesure :
 | `v1` | `code_v1` | 2048 | 5 (121, 533, 534, 568, 570) |
 
 L'API fournit, pour chaque mot, sa ligne (`line_number`), sa position et son
-avance mesurée. La taille de police d'une ligne se déduit donc exactement —
-`largeur × cadratin / avance` — sans aucun algorithme de justification : le
-calligraphe a déjà justifié chaque ligne, et l'écart mesuré entre lignes d'une
-même page reste sous 3 %.
+avance mesurée. Une ligne se justifie donc exactement — `largeur × cadratin /
+avance` — sans aucun algorithme de justification : **l'écart inter-mots est déjà
+dans l'avance du glyphe**. Mesuré sur la page 3, chaque avance dépasse son encre
+de 1,3 à 17,4 % du cadratin, et rendre les mots adjacents reproduit la
+composition imprimée.
+
+**Mais cette formule ne vaut que pour une ligne pleine**, et l'appliquer *ligne
+par ligne* était faux. La mesure, faite sur la page imprimée :
+
+- sur une page ordinaire, toutes les lignes partagent la même mesure — page 3 :
+  de 16,148 à 16,509 cadratins, soit **2,2 % d'écart** ;
+- une ligne courte existe pourtant, et le papier ne la rallonge pas : c'est la
+  **dernière ligne d'une sourate**. Page 604, l'emplacement 4 porte 8,822
+  cadratins quand les lignes pleines en portent 15,7 — et l'imprimé le rend
+  court (53 % de la mesure), à la même taille que les autres ;
+- grossir une ligne courte pour lui faire tenir la même largeur donnait 42,8 pt
+  là où la page est à 24 pt, et **63 pt sur la page 2 pour une hauteur de ligne
+  de 47 pt** — un débordement.
+
+La composition retenue est donc : **une taille unique par page**, déduite de la
+**médiane** des avances de la page, la valeur que partage la majorité des
+lignes. Une ligne plus longue que cette médiane est réduite juste assez pour
+tenir, et c'est le seul cas où une ligne s'écarte de la taille de sa page. La
+règle vit dans `src/lib/composition.ts` ; ses raisons et ses chiffres y sont.
+
+La médiane plutôt que le maximum, et c'est mesuré aussi : page 599, deux
+emplacements portent 49 718 et 50 893 unités quand la médiane vaut 40 416 —
+ancrer la page sur le maximum la rapetissait de 10 % tout entière. Ancrée sur la
+médiane, elle tombe sur l'imprimé à 0,3 % près.
+
+`outils/prouver-composition-page.py` confronte la composition prévue à la page
+**imprimée**, emplacement par emplacement, et refuse une page où une ligne
+courte serait grossie. Il s'éprouve lui-même : `REGLE=par-ligne` lui donne la
+composition d'avant, qu'il doit refuser. Résultat mesuré — page 3 : écart médian
+0,3 %, pire 2,0 % sur quinze lignes ; page 604 : 2,1 % et 3,6 % ; page 599 :
+0,3 %, avec une ligne signalée comme **avance incomplète dans les données** (son
+imprimé est plein, l'avance de l'API ne couvre que 16,8 % de la mesure).
 
 `outils/generer-metriques-moushaf.py` engendre `src/donnees/moushaf-metriques.json`
 (604 pages) en vérifiant page par page que les codes employés existent bien dans
@@ -177,6 +212,8 @@ pour nommer son fichier et le rappeler dans son résumé. Avant de publier, mont
 | `eprouver-verifier-flux.py` | falsifie le précédent : 15 cas, chacun devant produire le marqueur attendu, restauration prouvée par empreinte SHA-256 |
 | `configurer-signature-android.py` | applique la signature de publication au projet natif engendré, et relit sa substitution |
 | `lire-schemas-xcodebuild.mjs` | extrait les schémas de la sortie de `xcodebuild -list -json`, tolérant au bruit |
+| `prouver-composition-page.py` | confronte la composition de l'application à la page **imprimée**, emplacement par emplacement ; refuse une page où une ligne courte serait grossie, et s'éprouve lui-même avec `REGLE=par-ligne`. Demande Pillow et le réseau |
+| `tailles-pages.mjs` | dit ce que l'application calcule pour une page donnée — la preuve ci-dessus s'en sert plutôt que de recopier la règle |
 | `generer-metriques-moushaf.py` | engendre les métriques des 604 pages depuis l'API |
 | `generer-juz.py` | engendre la table des 30 juz depuis `/juzs` |
 | `generer-icones.py` | dessine les icônes (motif géométrique, non figuratif) |

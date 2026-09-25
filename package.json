@@ -48,6 +48,7 @@
     "verifier:flux": "node outils/verifier-flux.mjs",
     "eprouver:flux": "python3 outils/eprouver-verifier-flux.py",
     "eprouver:signature": "python3 outils/eprouver-verifier-signature-apk.py",
+    "prouver:composition": "python3 outils/prouver-composition-page.py",
     "verifier": "npm run verifier:flux && npm run typecheck && npm test",
     "genere:metriques": "python outils/generer-metriques-moushaf.py",
     "genere:juz": "python outils/generer-juz.py",

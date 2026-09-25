@@ -10,13 +10,14 @@
  * Un `justifyContent` repartirait la place restante et ferait deriver les rangs.
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 
 import { EnTeteSourate } from '@/components/moushaf/EnTeteSourate';
 import { LigneMoushaf } from '@/components/moushaf/LigneMoushaf';
 import { AMIRI_QURAN } from '@/constants/polices';
 import { LIGNES_PAR_PAGE, couleurs, espaces } from '@/constants/theme';
+import { taillePolicePage } from '@/lib/composition';
 import type { CleVerset, PageMoushaf as TypePage } from '@/types/coran';
 
 interface Props {
@@ -52,6 +53,16 @@ export function PageMoushaf({
 
   const hauteurLigne = taille.hauteur > 0 ? taille.hauteur / LIGNES_PAR_PAGE : 0;
   const largeurLigne = Math.max(0, taille.largeur - espaces.s);
+
+  // Une seule taille de police pour la page entiere — c'est celle que le
+  // calligraphe a donnee a ses quinze lignes (mesure : 2,2 % d'ecart sur la page
+  // 3). La calculer ligne par ligne, comme on le faisait, grossissait les lignes
+  // courtes jusqu'a les faire deborder : 63 pt sur la page 2 pour une hauteur de
+  // ligne de 47 pt.
+  const taillePolice = useMemo(
+    () => taillePolicePage(Object.values(page.avances), page.upem, largeurLigne),
+    [page.avances, page.upem, largeurLigne],
+  );
 
   // Ou commence une sourate sur cette page ?
   //
@@ -89,6 +100,7 @@ export function PageMoushaf({
                 upem={page.upem}
                 avance={page.avances[ligne.numero] ?? 0}
                 largeur={largeurLigne}
+                taillePolice={taillePolice}
                 hauteurLigne={hauteurLigne * 0.92}
                 versetSurligne={versetSurligne}
                 versetSelectionne={versetSelectionne}
